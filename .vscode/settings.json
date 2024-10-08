@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.sql": "postgres",
+        "acpi62.h": "c",
+        "uefiapplicationentrypoint.h": "c",
+        "chrono": "c"
+    }
+}
