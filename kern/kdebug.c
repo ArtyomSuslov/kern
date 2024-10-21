@@ -97,5 +97,35 @@ find_function(const char *const fname) {
 
     // LAB 3: Your code here:
 
-    return 0;
+    struct Dwarf_Addrs dwarf_addr;
+    load_kernel_dwarf_info(&dwarf_addr);
+
+    uintptr_t function_offset = 0;
+
+    // Пробуем найти адрес функции с помощью naive_address_by_fname
+    int result = naive_address_by_fname(&dwarf_addr, fname, &function_offset);
+
+    // Если naive_address_by_fname не нашёл адрес, пробуем address_by_fname
+    if (result < 0) {
+        result = address_by_fname(&dwarf_addr, fname, &function_offset);
+    }
+
+    // Если ни одна из функций не нашла адрес, пробуем искать в таблице символов
+    if (result < 0) {
+        const char *string_table = (const char *)uefi_lp->StringTableStart;
+        struct Elf64_Sym *symbol_table_start = (struct Elf64_Sym *)uefi_lp->SymbolTableStart;
+        struct Elf64_Sym *symbol_table_end = (struct Elf64_Sym *)uefi_lp->SymbolTableEnd;
+
+        // Ищем функцию по имени в таблице символов
+        for (struct Elf64_Sym *cur_symb = symbol_table_start; cur_symb < symbol_table_end; ++cur_symb) {
+            // Сравниваем имя функции из строковой таблицы с искомым fname
+            if (!strcmp(&string_table[cur_symb->st_name], fname)) {
+                // Если найдено совпадение, возвращаем значение символа (адрес функции)
+                return (uintptr_t)cur_symb->st_value;
+            }
+        }
+    }
+
+    // Если функция была найдена в DWARF, возвращаем её адрес
+    return function_offset;
 }

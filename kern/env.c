@@ -89,6 +89,16 @@ env_init(void) {
     /* Set up envs array */
 
     // LAB 3: Your code here
+    for (size_t i = 0; i < NENV; ++i) {
+        envs[i].env_link = (i < NENV - 1) ? &envs[i + 1] : NULL;
+        envs[i].env_id = 0;
+        envs[i].env_parent_id = 0;
+        envs[i].env_type = ENV_TYPE_KERNEL;
+        envs[i].env_status = ENV_FREE;
+        envs[i].binary = NULL;
+    }
+
+    env_free_list = envs;
 }
 
 /* Allocates and initializes a new environment.
@@ -145,7 +155,8 @@ env_alloc(struct Env **newenv_store, envid_t parent_id, enum EnvType type) {
     env->env_tf.tf_cs = GD_KT;
 
     // LAB 3: Your code here:
-    // static uintptr_t stack_top = 0x2000000;
+    static uintptr_t stack_top = 0x2000000;
+    env->env_tf.tf_rsp = stack_top - 2 * PAGE_SIZE * (env - envs);
 #else
     env->env_tf.tf_ds = GD_UD | 3;
     env->env_tf.tf_es = GD_UD | 3;
@@ -173,6 +184,58 @@ bind_functions(struct Env *env, uint8_t *binary, size_t size, uintptr_t image_st
 
     /* NOTE: find_function from kdebug.c should be used */
 
+    // Поиск ELF-файла и его секций
+    struct Elf *elf_header = (struct Elf *)binary;
+    struct Secthdr *sec_hdrs = (struct Secthdr *)(binary + elf_header->e_shoff);
+
+    // Получение строковой таблицы секций
+    char *sec_str_table = (char *)(binary + sec_hdrs[elf_header->e_shstrndx].sh_offset);
+    UINT64 sec_str_table_size = sec_hdrs[elf_header->e_shstrndx].sh_size;
+
+    // Индексы для строковой и символьной таблиц
+    UINT16 strtab_index = 0, symtab_index = 0;
+
+    // Поиск секций .strtab и .symtab
+    for (UINT16 i = 0; i < elf_header->e_shnum; ++i) {
+        if (sec_hdrs[i].sh_type == ELF_SHT_STRTAB &&
+            !strncmp(sec_str_table + sec_hdrs[i].sh_name, ".strtab", sec_str_table_size - sec_hdrs[i].sh_name))
+            strtab_index = i;
+
+        if (sec_hdrs[i].sh_type == ELF_SHT_SYMTAB &&
+            !strncmp(sec_str_table + sec_hdrs[i].sh_name, ".symtab", sec_str_table_size - sec_hdrs[i].sh_name))
+            symtab_index = i;
+    }
+
+    // Получение символьной и строковой таблиц
+    char *string_table = (char *)(binary + sec_hdrs[strtab_index].sh_offset);
+    struct Elf64_Sym *symbol_table = (struct Elf64_Sym *)(binary + sec_hdrs[symtab_index].sh_offset);
+    size_t num_symbols = sec_hdrs[symtab_index].sh_size / sizeof(*symbol_table);
+
+    // Проход по символьной таблице и связывание глобальных объектов
+    for (size_t i = 0; i < num_symbols; i++) {
+        if (ELF64_ST_BIND(symbol_table[i].st_info) == STB_GLOBAL &&
+            ELF64_ST_TYPE(symbol_table[i].st_info) == STT_OBJECT) {
+
+            // Поиск реального адреса функции
+            uintptr_t function_address = find_function(string_table + symbol_table[i].st_name);
+            
+            // Проверяем, находится ли символ в допустимом диапазоне памяти
+            if (function_address &&
+                symbol_table[i].st_size >= sizeof(uintptr_t) &&
+                image_start <= symbol_table[i].st_value &&
+                symbol_table[i].st_value <= image_end - sizeof(uintptr_t)) {
+                
+                // Связывание: заменяем значение символа на адрес функции
+                *((uintptr_t *) symbol_table[i].st_value) = function_address;
+
+                // Логируем успешное связывание
+                cprintf("Binding symblol (%s) having reference at %lx located at %lx\n",
+                        string_table + symbol_table[i].st_name,
+                        symbol_table[i].st_value,
+                        function_address);
+            }
+        }
+    }
     return 0;
 }
 
@@ -220,6 +283,73 @@ static int
 load_icode(struct Env *env, uint8_t *binary, size_t size) {
     // LAB 3: Your code here
 
+    // Получаем заголовок ELF-файла
+    struct Elf *elf = (struct Elf *)binary;
+    
+    // Проверка магического числа ELF
+    if (elf->e_magic != ELF_MAGIC) {
+        return -E_INVALID_EXE;
+    }
+
+    // Проверка размера заголовка секций
+    if (elf->e_shentsize != sizeof(struct Secthdr)) {
+        return -E_INVALID_EXE;
+    }
+
+    // Проверка индекса строковой таблицы секций
+    if (elf->e_shstrndx >= elf->e_shnum) {
+        return -E_INVALID_EXE;
+    }
+
+    // Проверка размера заголовка программных сегментов
+    if (elf->e_phentsize != sizeof(struct Proghdr)) {
+        return -E_INVALID_EXE;
+    }
+
+    // Переменные для хранения диапазона адресов сегментов
+    uintptr_t image_start = (uintptr_t)(-1);
+    uintptr_t image_end = 0;
+
+    // Заголовки программных сегментов (Proghdr)
+    struct Proghdr *phdr = NULL, *phdrs = (struct Proghdr *)(binary + elf->e_phoff);
+
+    // Проходим по всем программным сегментам
+    for (UINT16 i = 0; i < elf->e_phnum; i++) {
+        phdr = &phdrs[i];
+        
+        // Если сегмент предназначен для загрузки в память
+        if (phdr->p_type == ELF_PROG_LOAD) {
+
+            // Проверка корректности размеров
+            if (phdr->p_filesz > phdr->p_memsz) {
+                return -E_INVALID_EXE;
+            }
+
+            // Обновление диапазона загружаемых адресов
+            if ((uintptr_t) phdr->p_va < image_start) {
+                image_start = (uintptr_t) phdr->p_va;
+            }
+            if (image_end < (uintptr_t)(phdr->p_va + phdr->p_memsz)) {
+                image_end = (uintptr_t)(phdr->p_va + phdr->p_memsz);
+            }
+
+            // Копирование данных сегмента в память по указанному виртуальному адресу
+            memcpy((void *) phdr->p_va, binary + phdr->p_offset, phdr->p_filesz);
+            
+            // Инициализация оставшейся части сегмента нулями (если p_memsz > p_filesz)
+            memset((void *) (phdr->p_va + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz);
+        }
+    }
+
+    // image_start: содержит минимальный виртуальный адрес начала всех загружаемых сегментов.
+    // image_end: содержит максимальный виртуальный адрес конца всех загружаемых сегментов.
+
+    // Установка точки входа программы в контексте среды выполнения
+    env->env_tf.tf_rip = elf->e_entry;
+
+    // Связывание функций из ELF-файла
+    bind_functions(env, binary, size, image_start, image_end);
+
     return 0;
 }
 
@@ -232,6 +362,21 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
 void
 env_create(uint8_t *binary, size_t size, enum EnvType type) {
     // LAB 3: Your code here
+    struct Env *env;
+    int status;
+
+    status = env_alloc(&env, 0, type);
+    if (status < 0) {
+        panic("Error: env_alloc, %i", status);
+    }
+    
+    status = load_icode(env, binary, size);
+    if (status < 0) {
+        panic("Error: load_icode, %i", status);
+    }
+
+    env->binary = binary;
+    env->env_parent_id = 0;
 }
 
 
@@ -260,6 +405,23 @@ env_destroy(struct Env *env) {
      * it traps to the kernel. */
 
     // LAB 3: Your code here
+
+    if (env->env_status == ENV_RUNNING && curenv != env) {
+        // Если окружение работает, но не является текущим, помечаем его как "умирающее"
+        env->env_status = ENV_DYING;
+        return;
+    }
+
+    // Освобождаем ресурсы окружения
+    env_free(env);
+
+    // Если текущее окружение совпадает с данным, сбрасываем curenv
+    if (curenv == env) {
+        // так как уничтоженное окружение больше не существует и его нельзя продолжать выполнять
+        curenv = NULL;
+        // Переходим к следующему окружению в планировщике
+        sched_yield();
+    }
 }
 
 #ifdef CONFIG_KSPACE
@@ -349,6 +511,17 @@ env_run(struct Env *env) {
     }
 
     // LAB 3: Your code here
+    if (curenv) {
+        if (curenv->env_status == ENV_RUNNING) {
+            curenv->env_status = ENV_RUNNABLE;
+        }
+    }
+
+    curenv = env;
+    curenv->env_status = ENV_RUNNING;
+    curenv->env_runs++;
+
+    env_pop_tf(&curenv->env_tf);
 
     while (1)
         ;

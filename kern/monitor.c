@@ -73,7 +73,7 @@ mon_backtrace(int argc, char **argv, struct Trapframe *tf) {
         int err;
         err = debuginfo_rip((uintptr_t)rip, &info);
         if (!err) {
-            cprintf("%s:%d: %s+%lu\n", info.rip_file, info.rip_line, info.rip_fn_name, rip - info.rip_fn_addr);
+            cprintf("%s:%d: %.*s+%lu\n", info.rip_file, info.rip_line, info.rip_fn_namelen, info.rip_fn_name, rip - info.rip_fn_addr);
         } else {
             cprintf("Error in debug info\n");
         }
