@@ -22,6 +22,7 @@
 int mon_help(int argc, char **argv, struct Trapframe *tf);
 int mon_kerninfo(int argc, char **argv, struct Trapframe *tf);
 int mon_backtrace(int argc, char **argv, struct Trapframe *tf);
+int mon_dumpcmos(int argc, char **argv, struct Trapframe *tf);
 
 struct Command {
     const char *name;
@@ -34,6 +35,7 @@ static struct Command commands[] = {
         {"help", "Display this list of commands", mon_help},
         {"kerninfo", "Display information about the kernel", mon_kerninfo},
         {"backtrace", "Print stack backtrace", mon_backtrace},
+        {"dumpcmos", "Display CMOS contents", mon_dumpcmos}
 };
 #define NCOMMANDS (sizeof(commands) / sizeof(commands[0]))
 
@@ -93,6 +95,18 @@ mon_dumpcmos(int argc, char **argv, struct Trapframe *tf) {
     // Hint: Use cmos_read8()/cmos_write8() functions.
     // LAB 4: Your code here
 
+    for (size_t i = 0; i < 128; i++) {
+        // Начало новой строки каждые 16 байт с отображением смещения
+        if (i % 16 == 0) {
+            if (i != 0) {
+                cprintf("\n");
+            }
+            cprintf("%02lx:", i);  // Печать смещения
+        }
+        // Печать данных CMOS в формате двух символов
+        cprintf(" %02x", cmos_read8(i));
+    }
+    cprintf("\n");  // Завершение последней строки вывода
     return 0;
 }
 

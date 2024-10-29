@@ -23,7 +23,16 @@ uint8_t
 cmos_read8(uint8_t reg) {
     /* MC146818A controller */
     // LAB 4: Your code here
+
     uint8_t res = 0;
+
+    // Устанавливаем нужный регистр CMOS с отключением NMI
+    outb(CMOS_CMD, reg | CMOS_NMI_LOCK);
+
+    // Читаем данные из выбранного регистра
+    res = inb(CMOS_DATA);
+
+    // Включаем NMI обратно
     nmi_enable();
     return res;
 }
@@ -31,6 +40,14 @@ cmos_read8(uint8_t reg) {
 void
 cmos_write8(uint8_t reg, uint8_t value) {
     // LAB 4: Your code here
+
+    // Выбор регистра для записи с отключением NMI
+    outb(CMOS_CMD, reg | CMOS_NMI_LOCK);
+
+    // Запись данных в выбранный регистр CMOS
+    outb(CMOS_DATA, value);
+
+    // Включение NMI обратно
     nmi_enable();
 }
 
@@ -43,6 +60,7 @@ void
 rtc_timer_pic_interrupt(void) {
     // LAB 4: Your code here
     // Enable PIC interrupts.
+    pic_irq_unmask(IRQ_CLOCK);
 }
 
 void
@@ -55,11 +73,21 @@ void
 rtc_timer_init(void) {
     // LAB 4: Your code here
     // (use cmos_read8()/cmos_write8())
+
+    // Настройка регистра B для разрешения прерываний
+    uint8_t reg_b_value = cmos_read8(RTC_BREG);
+    uint8_t new_reg_b_value = reg_b_value | RTC_PIE;
+    cmos_write8(RTC_BREG, new_reg_b_value);
+
+    // Настройка регистра A для изменения частоты прерываний
+    uint8_t reg_a_value = cmos_read8(RTC_AREG);
+    uint8_t new_reg_a_value = reg_a_value | 0xF;
+    cmos_write8(RTC_AREG, new_reg_a_value);
 }
 
 uint8_t
 rtc_check_status(void) {
     // LAB 4: Your code here
     // (use cmos_read8())
-    return 0;
+    return cmos_read8(RTC_CREG);
 }
