@@ -75,14 +75,12 @@ rtc_timer_init(void) {
     // (use cmos_read8()/cmos_write8())
 
     // Настройка регистра B для разрешения прерываний
-    uint8_t reg_b_value = cmos_read8(RTC_BREG);
-    uint8_t new_reg_b_value = reg_b_value | RTC_PIE;
-    cmos_write8(RTC_BREG, new_reg_b_value);
+    uint8_t b_reg = cmos_read8(RTC_BREG);
+    cmos_write8(RTC_BREG, b_reg | RTC_PIE);
 
     // Настройка регистра A для изменения частоты прерываний
-    uint8_t reg_a_value = cmos_read8(RTC_AREG);
-    uint8_t new_reg_a_value = reg_a_value | 0xF;
-    cmos_write8(RTC_AREG, new_reg_a_value);
+    uint8_t a_reg = cmos_read8(RTC_AREG);
+    cmos_write8(RTC_AREG, RTC_SET_NEW_RATE(a_reg, RTC_500MS_RATE));
 }
 
 uint8_t
