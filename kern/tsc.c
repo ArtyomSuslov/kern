@@ -198,18 +198,53 @@ static int timer_id = -1;
 static uint64_t timer = 0;
 static uint64_t freq = 0;
 
-void
-timer_start(const char *name) {
-    (void)timer_started;
-    (void)timer_id;
-    (void)timer;
-    (void)freq;
+void timer_start(const char *name) {
+    // Ищем таймер в таблице доступных таймеров по его имени
+    for (int i = 0; i < MAX_TIMERS; ++i) {
+        if (timertab[i].timer_name && !strcmp(timertab[i].timer_name, name)) {
+            timer_id = i;                       // Сохраняем индекс таймера
+            timer_started = 1;                  // Устанавливаем флаг, что таймер запущен
+            timer = read_tsc();                 // Считываем текущее время процессора (TSC)
+            freq = timertab[i].get_cpu_freq();  // Получаем частоту процессора для этого таймера
+            return;
+        }
+    }
+    // Если таймер не найден, выводим ошибку
+    print_timer_error();
 }
 
-void
-timer_stop(void) {
+void timer_stop(void) {
+    // Если таймер не был запущен, выводим ошибку
+    if (!timer_started) {
+        print_timer_error();
+        return;
+    }
+
+    // Если частота процессора не была установлена, выводим ошибку
+    if (freq == 0) {
+        print_timer_error();
+        return;
+    }
+
+    // Вычисляем прошедшее время в тактах TSC и преобразуем время в секунды
+    uint64_t elapsed_time = read_tsc() - timer;
+    double elapsed_seconds = (double)elapsed_time / (double)freq;
+
+    // Выводим результат и сбрасываем флаг запущенного таймера
+    print_time(elapsed_seconds);
+    timer_started = 0;
 }
 
-void
-timer_cpu_frequency(const char *name) {
+void timer_cpu_frequency(const char *name) {
+    // Ищем таймер в таблице доступных таймеров
+    for (int i = 0; i < MAX_TIMERS; i++) {
+        if (timertab[i].timer_name && !strcmp(timertab[i].timer_name, name)) {
+            // Выводим частоту процессора, полученную для этого таймера
+            cprintf("%lu\n", timertab[i].get_cpu_freq());
+            return;
+        }
+    }
+
+    // Если таймер с таким именем не найден, выводим ошибку
+    print_timer_error();
 }

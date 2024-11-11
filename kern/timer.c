@@ -88,7 +88,53 @@ acpi_find_table(const char *sign) {
      */
     // LAB 5: Your code here:
 
-    return NULL;
+    uint32_t table_entries = 0;
+    uint8_t  checksum = 0;
+    RSDP          *rsdp = (RSDP *) mmio_map_region(uefi_lp->ACPIRoot, sizeof(RSDP));
+    RSDT          *rsdt;
+    ACPISDTHeader *table_header = NULL, *acpi_table_header = NULL;
+    uint64_t      *sdts;
+
+    // Проверка контрольной суммы RSDP, чтобы убедиться, что она валидна
+    for (size_t i = 0; i < sizeof(RSDP); ++i) {
+        checksum += ((char *) rsdp)[i];
+    }
+    if (checksum) panic("RSDP is broken");
+
+    // Сброс контрольной суммы
+    checksum = 0;
+        
+    // Отображаем RSDT или XSDT в зависимости от ревизии RSDP
+    rsdt = mmio_map_region(rsdp->XsdtAddress, sizeof(RSDT));
+
+    // Проверяем заголовок RSDT/XSDT
+    table_header = mmio_map_region((physaddr_t) &rsdt->h, sizeof(ACPISDTHeader));
+    table_entries = (table_header->Length - sizeof(*table_header)) / 8;
+
+    sdts = (uint64_t *) rsdt->PointerToOtherSDT;
+
+    // Ищем нужную таблицу ACPI по её сигнатуре
+    for (int i = 0; i < table_entries; ++i) {
+        table_header = (ACPISDTHeader *) mmio_remap_last_region(sdts[i], table_header, sizeof(ACPISDTHeader), sizeof(ACPISDTHeader));
+        
+        // Если сигнатура совпадает, таблица найдена
+        if (!strncmp(table_header->Signature, sign, 4)) {
+            acpi_table_header = table_header;
+            break;
+        }
+    }
+
+    // Если таблица не найдена, возвращаем NULL
+    if (!acpi_table_header) return NULL;
+
+    // Проверяем контрольную сумму найденной таблицы, чтобы убедиться, что она валидна
+    for (uint32_t i = 0; i < acpi_table_header->Length; ++i) {
+        checksum += ((char *) acpi_table_header)[i];
+    }
+
+    if (checksum) return NULL;
+
+    return acpi_table_header;
 }
 
 /* Obtain and map FADT ACPI table address. */
@@ -98,8 +144,10 @@ get_fadt(void) {
     // (use acpi_find_table)
     // HINT: ACPI table signatures are
     //       not always as their names
-
-    return NULL;
+    
+    static FADT *fadt_header = NULL;
+    if (!fadt_header) fadt_header = acpi_find_table("FACP");
+    return fadt_header;
 }
 
 /* Obtain and map RSDP ACPI table address. */
@@ -108,7 +156,9 @@ get_hpet(void) {
     // LAB 5: Your code here
     // (use acpi_find_table)
 
-    return NULL;
+    static HPET *hpet_header = NULL;
+    if (!hpet_header) hpet_header = acpi_find_table("HPET");
+    return hpet_header;
 }
 
 /* Getting physical HPET timer address from its table. */
@@ -209,11 +259,43 @@ hpet_get_main_cnt(void) {
 void
 hpet_enable_interrupts_tim0(void) {
     // LAB 5: Your code here
+    
+    // Включаем Legacy Replacement Mode (режим замены PIT)
+    // который задействует прерывания на линии IRQ0 для таймера HPET0
+    hpetReg->GEN_CONF |= HPET_LEG_RT_CNF;
+
+    // Настраиваем привязку таймера 0 к линии прерывания IRQ_TIMER
+    hpetReg->TIM0_CONF |= (IRQ_TIMER << 9);
+
+    // Устанавливаем таймер в периодический режим и разрешаем прерывания
+    hpetReg->TIM0_CONF |= HPET_TN_TYPE_CNF | HPET_TN_INT_ENB_CNF | HPET_TN_VAL_SET_CNF;
+
+    // Устанавливаем значение компаратора, чтобы прерывания генерировались через 0.5 секунды
+    hpetReg->TIM0_COMP = hpet_get_main_cnt() + Peta / hpetFemto / 2;
+
+    // Разрешаем прерывание на линии IRQ_TIMER
+    pic_irq_unmask(IRQ_TIMER);
 }
 
 void
 hpet_enable_interrupts_tim1(void) {
     // LAB 5: Your code here
+
+    // Включаем Legacy Replacement Mode
+    // который задействует прерывания на линии IRQ8 для таймера HPET1
+    hpetReg->GEN_CONF |= HPET_LEG_RT_CNF;
+
+    // Настраиваем привязку таймера 1 к линии прерывания IRQ_CLOCK
+    hpetReg->TIM1_CONF = (IRQ_CLOCK << 9);
+
+    // Устанавливаем таймер в периодический режим и разрешаем прерывания
+    hpetReg->TIM1_CONF |= HPET_TN_TYPE_CNF | HPET_TN_INT_ENB_CNF | HPET_TN_VAL_SET_CNF;
+
+    // Устанавливаем значение компаратора, чтобы прерывания генерировались через 1.5 секунды
+    hpetReg->TIM1_COMP = hpet_get_main_cnt() + Peta / hpetFemto / 2 * 3;
+
+    // Разрешаем прерывание на линии IRQ_CLOCK
+    pic_irq_unmask(IRQ_CLOCK);
 }
 
 void
@@ -231,9 +313,31 @@ hpet_handle_interrupts_tim1(void) {
  * about pause instruction. */
 uint64_t
 hpet_cpu_frequency(void) {
-    static uint64_t cpu_freq;
+    static uint64_t cpu_freq = 0;
 
     // LAB 5: Your code here
+
+    // Если частота уже вычислена, сразу возвращаем
+    if (cpu_freq)
+        return cpu_freq;
+
+    // Ждем 100 тикеров HPET
+    const uint64_t wait = 100;
+
+    uint64_t hpet_delta;
+    uint64_t hpet_start = hpet_get_main_cnt();
+    uint64_t tsc_start = read_tsc();
+    uint64_t tsc_end;
+
+    // Цикл ожидания, пока не пройдет нужное количество тикеров HPET
+    do {
+        asm volatile("pause");                         // Инструкция для предотвращения излишней загрузки CPU
+        hpet_delta = hpet_get_main_cnt() - hpet_start; // Разница в значениях HPET
+        tsc_end = read_tsc();                          // Получаем значение TSC в конце цикла
+    } while (hpet_delta < hpetFreq / wait);            // Повторяем, пока не достигнем нужной задержки
+
+    // Вычисляем частоту процессора
+    cpu_freq = (tsc_end - tsc_start) * hpetFreq / hpet_delta;
 
     return cpu_freq;
 }
@@ -249,9 +353,40 @@ pmtimer_get_timeval(void) {
  *      can be 24-bit or 32-bit. */
 uint64_t
 pmtimer_cpu_frequency(void) {
-    static uint64_t cpu_freq;
+    static uint64_t cpu_freq = 0;
 
     // LAB 5: Your code here
+
+    // Если частота уже вычислена, вернуть её
+    if (cpu_freq)
+        return cpu_freq;
+
+    // Ждем 100 тикеров HPET
+    const uint64_t wait = 100;
+
+    uint64_t pm_delta;
+    uint64_t pm_start = pmtimer_get_timeval();
+    uint64_t tsc_start = read_tsc();
+    uint64_t tsc_end;
+
+    // Цикл ожидания, пока не пройдет достаточное количество времени
+    do {
+        asm volatile("pause");                    // Уменьшаем нагрузку на процессор во время ожидания
+        uint64_t pm_cur = pmtimer_get_timeval();  // Текущее значение PM таймера
+        tsc_end = read_tsc();                     // Текущее значение TSC
+
+        // Обработка переполнения PM таймера
+        if (pm_start <= pm_cur) {
+            pm_delta = pm_cur - pm_start;                     // Нет переполнения
+        } else if (pm_start - pm_cur <= 0x00FFFFFF) {
+            pm_delta = (0x00FFFFFF - pm_start) + pm_cur;  // Переполнение 24 бита
+        } else {
+            pm_delta = (0xFFFFFFFF - pm_start) + pm_cur;  // Переполнение 32 бита
+        }
+    } while (pm_delta < PM_FREQ / wait);  // Ожидание нужного количества времени
+
+    // Вычисление частоты процессора на основе времени TSC и дельты PM таймера
+    cpu_freq = (tsc_end - tsc_start) * PM_FREQ / pm_delta;
 
     return cpu_freq;
 }
