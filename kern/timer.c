@@ -97,7 +97,7 @@ acpi_find_table(const char *sign) {
 
     // Проверка контрольной суммы RSDP, чтобы убедиться, что она валидна
     for (size_t i = 0; i < sizeof(RSDP); ++i) {
-        checksum += ((char *) rsdp)[i];
+        checksum = (uint8_t)(checksum + ((char *) rsdp)[i]);
     }
     if (checksum) panic("RSDP is broken");
 
@@ -115,7 +115,9 @@ acpi_find_table(const char *sign) {
 
     // Ищем нужную таблицу ACPI по её сигнатуре
     for (int i = 0; i < table_entries; ++i) {
-        table_header = (ACPISDTHeader *) mmio_remap_last_region(sdts[i], table_header, sizeof(ACPISDTHeader), sizeof(ACPISDTHeader));
+        uint64_t address;
+        memcpy(&address, &sdts[i], sizeof(uint64_t));
+        table_header = mmio_remap_last_region((physaddr_t) address, table_header, sizeof(ACPISDTHeader), sizeof(ACPISDTHeader));
         
         // Если сигнатура совпадает, таблица найдена
         if (!strncmp(table_header->Signature, sign, 4)) {
@@ -129,7 +131,7 @@ acpi_find_table(const char *sign) {
 
     // Проверяем контрольную сумму найденной таблицы, чтобы убедиться, что она валидна
     for (uint32_t i = 0; i < acpi_table_header->Length; ++i) {
-        checksum += ((char *) acpi_table_header)[i];
+        checksum = (uint8_t)(checksum + ((char *) acpi_table_header)[i]);
     }
 
     if (checksum) return NULL;
