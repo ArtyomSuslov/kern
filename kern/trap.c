@@ -3,6 +3,7 @@
 #include <inc/assert.h>
 #include <inc/string.h>
 
+#include <kern/pmap.h>
 #include <kern/trap.h>
 #include <kern/console.h>
 #include <kern/monitor.h>
@@ -10,6 +11,7 @@
 #include <kern/sched.h>
 #include <kern/kclock.h>
 #include <kern/picirq.h>
+#include <kern/timer.h>
 #include <kern/timer.h>
 #include <kern/traceopt.h>
 
@@ -219,6 +221,7 @@ trap_dispatch(struct Trapframe *tf) {
         }
         return;
     case IRQ_OFFSET + IRQ_CLOCK:
+    case IRQ_OFFSET + IRQ_TIMER:
     case IRQ_OFFSET + IRQ_TIMER:
         // LAB 4: Your code here
         // rtc_timer_pic_handle();
