@@ -222,7 +222,6 @@ trap_dispatch(struct Trapframe *tf) {
         return;
     case IRQ_OFFSET + IRQ_CLOCK:
     case IRQ_OFFSET + IRQ_TIMER:
-    case IRQ_OFFSET + IRQ_TIMER:
         // LAB 4: Your code here
         // rtc_timer_pic_handle();
 

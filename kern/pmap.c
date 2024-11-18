@@ -83,6 +83,14 @@ list_init(struct List *list) {
 inline static void __attribute__((always_inline))
 list_append(struct List *list, struct List *new) {
     // LAB 6: Your code here
+
+    struct List *after = list->next;
+
+    new->prev = list;
+    new->next = after;
+    
+    after->prev = new;
+    list->next = new;
 }
 
 /*
@@ -92,6 +100,11 @@ list_append(struct List *list, struct List *new) {
 inline static struct List *__attribute__((always_inline))
 list_del(struct List *list) {
     // LAB 6: Your code here
+
+    list->prev->next = list->next;
+    list->next->prev = list->prev;
+
+    list_init(list);
 
     return list;
 }
@@ -174,7 +187,33 @@ alloc_child(struct Page *parent, bool right) {
 
     // LAB 6: Your code here
 
-    struct Page *new = NULL;
+    // Если у родитель не является валидным узлом, возвращаем NULL
+    if (!parent->class)
+        return NULL;
+
+    // Выделяем новый дескриптор для дочернего узла, копируя состояние родителя
+    struct Page *new = alloc_descriptor(parent->state);
+
+    // Устанавливаем ссылку на родителя для нового узла
+    new->parent = parent;
+
+    // Уменьшаем класс для нового узла, так как дочерний узел представляет меньший диапазон памяти
+    new->class = parent->class - 1;
+
+    // Если нужно создать правый дочерний узел
+    if (right) {
+        parent->right = new;
+        // Адрес правого ребенка будет на 2^(class) больше адреса родителя
+        new->addr = parent->addr + (1ULL << new->class);
+    } else {
+        parent->left = new;
+        // Адрес левого ребенка будет совпадать с адресом родителя
+        new->addr = parent->addr;
+    }
+
+    // Если у родителя есть ссылка (refc > 0), у нового дочернего узла ссылка должна быть установлена в 1
+    if (parent->refc)
+        new->refc = 1;
 
     return new;
 }
@@ -314,6 +353,33 @@ attach_region(uintptr_t start, uintptr_t end, enum PageState type) {
     end = ROUNDUP(end, CLASS_SIZE(0));
 
     // LAB 6: Your code here
+
+    // Пока начало региона не достигло конца
+    while (start != end) {
+        // Проходим по всем возможным классам памяти
+        for (class = 0; class < MAX_CLASS; ++class) {
+            // Если адрес начала не выровнен по границе класса, то уменьшаем класс
+            if (start & CLASS_MASK(class)) {
+                --class;
+                break;
+            }
+            // Проверяем, если данный диапазон страниц можно выделить
+            if (page_lookup(NULL, start, class, ALLOCATABLE_NODE, 0))
+                break;
+        }
+
+        // Пока размер класса не больше оставшегося размера региона
+        while (CLASS_SIZE(class) > end - start) {
+            // Уменьшаем класс, чтобы вместить оставшийся диапазон
+            --class;
+        }
+
+        // Вызываем page_lookup, чтобы закрепить регион с нужным типом
+        page_lookup(NULL, start, class, type, 1);
+
+        // Перемещаем начало на следующий класс
+        start += CLASS_SIZE(class);
+    }
 }
 
 /*
@@ -424,6 +490,37 @@ dump_virtual_tree(struct Page *node, int class) {
 void
 dump_memory_lists(void) {
     // LAB 6: Your code here
+
+    struct List *li   = NULL;  // Указатель для обхода списка
+    struct Page *peer = NULL;  // Указатель на страницу для вывода информации о ней
+
+    // Заголовок вывода информации о свободных страницах
+    cprintf("Free pages:\nClass   Page addresses\n");
+
+    // Проходим по всем классам памяти
+    for (int pclass = 0; pclass < MAX_CLASS; pclass++, li = NULL) {
+        // Если в списке свободных страниц для данного класса нет страниц, пропускаем этот класс
+        if (free_classes[pclass].next == &free_classes[pclass]) {
+            continue;
+        }
+
+        // Выводим номер класса
+        cprintf("%2d      ", pclass);
+
+        int cnt = 1;
+        // Обход списка свободных страниц для текущего класса
+        for (li = free_classes[pclass].next; li != &free_classes[pclass]; li = li->next, cnt++) {
+            peer = (struct Page *)li;  // Преобразуем элемент списка в указатель на структуру Page
+            // Выводим адрес страницы с учетом смещения в зависимости от класса
+            cprintf("%08lX ", (unsigned long)peer->addr << pclass);
+            // Каждые 8 адресов выводим новую строку для удобства
+            if (cnt % 8 == 0)
+                cprintf("\n        ");
+        }
+        // Печатаем новый абзац после завершения обработки всех страниц для текущего класса
+        cprintf("\n\n");
+    }
+
 }
 
 
@@ -522,11 +619,13 @@ detect_memory(void) {
 
     /* Attach first page as reserved memory */
     // LAB 6: Your code here
+    attach_region(0, CLASS_SIZE(0), RESERVED_NODE);
 
     /* Attach kernel and old IO memory
      * (from IOPHYSMEM to the physical address of end label. end points the the
      *  end of kernel executable image.)*/
     // LAB 6: Your code here
+    attach_region(IOPHYSMEM, (uintptr_t)end - KERN_BASE_ADDR, RESERVED_NODE);
 
     /* Detect memory via ether UEFI or CMOS */
     if (uefi_lp && uefi_lp->MemoryMap) {
@@ -554,7 +653,9 @@ detect_memory(void) {
             /* Attach memory described by memory map entry described by start
              * of type type*/
             // LAB 6: Your code here
-            (void)type;
+            uintptr_t start_phys = start->PhysicalStart;
+            uintptr_t end_phys = start->PhysicalStart + EFI_PAGE_SIZE * start->NumberOfPages;
+            attach_region(start_phys, end_phys, type);
 
             start = (void *)((uint8_t *)start + uefi_lp->MemoryMapDescriptorSize);
         }
