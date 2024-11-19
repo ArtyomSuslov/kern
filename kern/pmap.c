@@ -200,12 +200,11 @@ alloc_child(struct Page *parent, bool right) {
     // Уменьшаем класс для нового узла, так как дочерний узел представляет меньший диапазон памяти
     new->class = parent->class - 1;
 
-    // Если нужно создать правый дочерний узел
-    if (right) {
+    if (right) /*правый дочерний узел*/ {
         parent->right = new;
         // Адрес правого ребенка будет на 2^(class) больше адреса родителя
         new->addr = parent->addr + (1ULL << new->class);
-    } else {
+    } else /*левый дочерний узел*/ {
         parent->left = new;
         // Адрес левого ребенка будет совпадать с адресом родителя
         new->addr = parent->addr;
@@ -354,7 +353,6 @@ attach_region(uintptr_t start, uintptr_t end, enum PageState type) {
 
     // LAB 6: Your code here
 
-    // Пока начало региона не достигло конца
     while (start != end) {
         // Проходим по всем возможным классам памяти
         for (class = 0; class < MAX_CLASS; ++class) {
