@@ -9,6 +9,7 @@
 #include <kern/kclock.h>
 #include <kern/picirq.h>
 #include <kern/trap.h>
+#include <kern/pmap.h>
 
 #define kilo      (1000ULL)
 #define Mega      (kilo * kilo)
@@ -90,7 +91,7 @@ acpi_find_table(const char *sign) {
 
     uint32_t table_entries = 0;
     uint8_t  checksum = 0;
-    RSDP          *rsdp = (RSDP *) mmio_map_region(uefi_lp->ACPIRoot, sizeof(RSDP));
+    RSDP          *rsdp = (RSDP *)mmio_map_region(uefi_lp->ACPIRoot, sizeof(RSDP));
     RSDT          *rsdt;
     ACPISDTHeader *table_header = NULL, *acpi_table_header = NULL;
     uint64_t      *sdts;
@@ -109,7 +110,7 @@ acpi_find_table(const char *sign) {
 
     // Проверяем заголовок RSDT/XSDT
     table_header = mmio_map_region((physaddr_t) &rsdt->h, sizeof(ACPISDTHeader));
-    table_entries = (table_header->Length - sizeof(*table_header)) / 8;
+    table_entries = (uint32_t)((table_header->Length - sizeof(*table_header)) / 8);
 
     sdts = (uint64_t *) rsdt->PointerToOtherSDT;
 
