@@ -94,10 +94,13 @@ env_init(void) {
      * Don't forget about rounding.
      * kzalloc_region() only works with current_space != NULL */
     // LAB 8: Your code here
+    envs = kzalloc_region(NENV * sizeof(*envs));
+    memset(envs, 0, ROUNDUP(NENV * sizeof(*envs), PAGE_SIZE));
 
     /* Map envs to UENVS read-only,
      * but user-accessible (with PROT_USER_ set) */
     // LAB 8: Your code here
+    map_region(current_space, UENVS, &kspace, (uintptr_t)envs, UENVS_SIZE, PROT_R | PROT_USER_);
 
     /* Set up envs array */
 
@@ -303,73 +306,73 @@ static int
 load_icode(struct Env *env, uint8_t *binary, size_t size) {
     // LAB 3: Your code here
 
-    // Получаем заголовок ELF-файла
-    struct Elf *elf = (struct Elf *)binary;
-    
-    // Проверка магического числа ELF
-    if (elf->e_magic != ELF_MAGIC) {
+    struct Elf *segments = (struct Elf*) binary;
+    if (segments->e_magic != ELF_MAGIC) {
+        cprintf("Incorrect format of ELF file");
         return -E_INVALID_EXE;
     }
 
-    // Проверка размера заголовка секций
-    if (elf->e_shentsize != sizeof(struct Secthdr)) {
+    if (segments->e_shentsize != sizeof (struct Secthdr)) {
+        cprintf("Incorrect section size");
         return -E_INVALID_EXE;
     }
 
-    // Проверка индекса строковой таблицы секций
-    if (elf->e_shstrndx >= elf->e_shnum) {
+    if (segments->e_shstrndx >= segments->e_shnum) {
+        cprintf("Incorrect index of string section");
         return -E_INVALID_EXE;
     }
 
-    // Проверка размера заголовка программных сегментов
-    if (elf->e_phentsize != sizeof(struct Proghdr)) {
+    if (segments->e_phentsize != sizeof (struct Proghdr)) {
+        cprintf("Incorrect size of program headers");
         return -E_INVALID_EXE;
     }
 
-    // Переменные для хранения диапазона адресов сегментов
-    uintptr_t image_start = (uintptr_t)(-1);
-    uintptr_t image_end = 0;
+    #ifdef CONFIG_KSPACE
+        uintptr_t image_start = 0;
+        bool start_set = 0;
+        uintptr_t image_end = 0;
+    #endif
+    switch_address_space(&env->address_space);
+    struct Proghdr *ph_array = (struct Proghdr *)(binary + segments->e_phoff);
+    for (size_t i = 0; i < segments->e_phnum; i++) {
+        struct Proghdr *ph = ph_array + i;
+        if (ph->p_type != ELF_PROG_LOAD)
+            continue;
 
-    // Заголовки программных сегментов (Proghdr)
-    struct Proghdr *phdr = NULL, *phdrs = (struct Proghdr *)(binary + elf->e_phoff);
-
-    // Проходим по всем программным сегментам
-    for (UINT16 i = 0; i < elf->e_phnum; i++) {
-        phdr = &phdrs[i];
-        
-        // Если сегмент предназначен для загрузки в память
-        if (phdr->p_type == ELF_PROG_LOAD) {
-
-            // Проверка корректности размеров
-            if (phdr->p_filesz > phdr->p_memsz) {
-                return -E_INVALID_EXE;
-            }
-
-            // Обновление диапазона загружаемых адресов
-            if ((uintptr_t) phdr->p_va < image_start) {
-                image_start = (uintptr_t) phdr->p_va;
-            }
-            if (image_end < (uintptr_t)(phdr->p_va + phdr->p_memsz)) {
-                image_end = (uintptr_t)(phdr->p_va + phdr->p_memsz);
-            }
-
-            // Копирование данных сегмента в память по указанному виртуальному адресу
-            memcpy((void *) phdr->p_va, binary + phdr->p_offset, phdr->p_filesz);
-            
-            // Инициализация оставшейся части сегмента нулями (если p_memsz > p_filesz)
-            memset((void *) (phdr->p_va + phdr->p_filesz), 0, phdr->p_memsz - phdr->p_filesz);
+        void *src = binary + ph->p_offset;
+        void *dst = (void *)(ph->p_va);
+        if (ph->p_filesz > ph->p_memsz) {
+            cprintf("Error. Incorrect filesz of section");
+            return -E_INVALID_EXE;
         }
+
+        if (src + ph->p_filesz > (void *)binary + size || src < (void *)binary)
+            continue;
+
+        #ifdef CONFIG_KSPACE
+            if (!start_set || (uintptr_t) dst < image_start) {
+                image_start = (uintptr_t) dst;
+                start_set = 1;
+            }
+            if (image_end < (uintptr_t)(dst + ph->p_memsz))
+                image_end = (uintptr_t)(dst + ph->p_memsz);
+        #endif
+        map_region(&env->address_space, ROUNDDOWN((uintptr_t) dst, PAGE_SIZE),
+            NULL, 0, ROUNDUP((uintptr_t)ph->p_memsz, PAGE_SIZE), PROT_RWX | PROT_USER_ | ALLOC_ZERO);
+        memcpy(dst, src, ph->p_filesz);
+        memset(dst + ph->p_filesz, 0, ph->p_memsz - ph->p_filesz);
     }
 
-    // image_start: содержит минимальный виртуальный адрес начала всех загружаемых сегментов.
-    // image_end: содержит максимальный виртуальный адрес конца всех загружаемых сегментов.
+    map_region(&env->address_space, USER_STACK_TOP - USER_STACK_SIZE,
+        NULL, 0, USER_STACK_SIZE, PROT_R | PROT_W | PROT_USER_ | ALLOC_ZERO);
 
-    // Установка точки входа программы в контексте среды выполнения
-    env->env_tf.tf_rip = elf->e_entry;
+    switch_address_space(&env->address_space);
+    env->env_tf.tf_rip = segments->e_entry;
 
-    // Связывание функций из ELF-файла
-    bind_functions(env, binary, size, image_start, image_end);
-    // LAB 8: Your code here
+    #ifdef CONFIG_KSPACE
+        bind_functions(env, binary, size, image_start, image_end);
+    #endif
+
     return 0;
 }
 
@@ -382,23 +385,25 @@ load_icode(struct Env *env, uint8_t *binary, size_t size) {
 void
 env_create(uint8_t *binary, size_t size, enum EnvType type) {
     // LAB 3: Your code here
+    // LAB 8: Your code here
     struct Env *env;
-    int status;
-
-    status = env_alloc(&env, 0, type);
-    if (status < 0) {
-        panic("Error: env_alloc, %i", status);
-    }
+    int status = env_alloc(&env, 0, type);
     
+    if (status < 0)
+        panic("Error. Can't allocate new environment : %i", status);
+    
+    env->binary = binary;
+    env->env_type = type;
+
     status = load_icode(env, binary, size);
-    if (status < 0) {
-        panic("Error: load_icode, %i", status);
-    }
+
+    if (status < 0)
+        panic("Error. Could not load executable : %i", status);
 
     env->binary = binary;
-    env->env_parent_id = 0;
-    // LAB 8: Your code here
+    env->env_type = type;
 }
+
 
 
 /* Frees env and all memory it uses */
@@ -458,6 +463,7 @@ env_destroy(struct Env *env) {
     /* Reset in_page_fault flags in case *current* environment
      * is getting destroyed after performing invalid memory access. */
     // LAB 8: Your code here
+    in_page_fault = 0;
 }
 
 #ifdef CONFIG_KSPACE
@@ -541,18 +547,24 @@ env_run(struct Env *env) {
     }
 
     // LAB 3: Your code here
+
     if (curenv) {
         if (curenv->env_status == ENV_RUNNING) {
             curenv->env_status = ENV_RUNNABLE;
         }
     }
 
+    if (env->env_status != ENV_RUNNABLE)
+        panic("Error. Scheduled process is not runnable");
+
     curenv = env;
     curenv->env_status = ENV_RUNNING;
     curenv->env_runs++;
 
-    env_pop_tf(&curenv->env_tf);
     // LAB 8: Your code here
+
+    switch_address_space(&curenv->address_space);
+    env_pop_tf(&curenv->env_tf);
 
     while (1)
         ;
