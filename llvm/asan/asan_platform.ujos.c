@@ -68,7 +68,12 @@ platform_abort() {
 static bool
 asan_shadow_allocator(struct UTrapframe *utf) {
     // LAB 9: Your code here
-    (void)utf;
+    
+    if (!SHADOW_ADDRESS_VALID(utf->utf_fault_va))
+        return 0;
+    
+    sys_alloc_region(0, ROUNDDOWN((void *)utf->utf_fault_va, PAGE_SIZE), PAGE_SIZE, ALLOC_ONE | PROT_R | PROT_W);
+    
     return 1;
 }
 #endif
