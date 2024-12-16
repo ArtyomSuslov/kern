@@ -89,55 +89,113 @@ acpi_find_table(const char *sign) {
      */
     // LAB 5: Your code here:
 
-    uint32_t table_entries = 0;
-    uint8_t  checksum = 0;
-    RSDP          *rsdp = (RSDP *)mmio_map_region(uefi_lp->ACPIRoot, sizeof(RSDP));
-    RSDT          *rsdt;
-    ACPISDTHeader *table_header = NULL, *acpi_table_header = NULL;
-    uint64_t      *sdts;
+    static RSDT *rsdt = 0; // Указатель на таблицу RSDT/XSDT, сохраняется между вызовами
+    static int XSDT_mode = 0; // Флаг использования XSDT (64-битные адреса)
 
-    // Проверка контрольной суммы RSDP, чтобы убедиться, что она валидна
-    for (size_t i = 0; i < sizeof(RSDP); ++i) {
-        checksum = (uint8_t)(checksum + ((char *) rsdp)[i]);
-    }
-    if (checksum) panic("RSDP is broken");
+    if (!rsdt) { // Если RSDT/XSDT ещё не загружена
+        if (!uefi_lp->ACPIRoot)
+            panic("RSDP NOT FOUND\n"); // Ошибка: адрес RSDP не найден
 
-    // Сброс контрольной суммы
-    checksum = 0;
-        
-    // Отображаем RSDT или XSDT в зависимости от ревизии RSDP
-    rsdt = mmio_map_region(rsdp->XsdtAddress, sizeof(RSDT));
+        // Мапим адрес RSDP в память
+        RSDP *rsdp = mmio_map_region((physaddr_t)(uefi_lp->ACPIRoot), sizeof(*rsdp));
 
-    // Проверяем заголовок RSDT/XSDT
-    table_header = mmio_map_region((physaddr_t) &rsdt->h, sizeof(ACPISDTHeader));
-    table_entries = (uint32_t)((table_header->Length - sizeof(*table_header)) / 8);
+        // Проверяем сигнатуру RSDP
+        if (strncmp(rsdp->Signature, "RSD PTR ", 8))
+            panic("RSDP broken"); // Ошибка: сигнатура RSDP повреждена
 
-    sdts = (uint64_t *) rsdt->PointerToOtherSDT;
+        physaddr_t rsdt_phys; // Физический адрес RSDT или XSDT
+        if (rsdp->Revision != 0) {
+            // Если версия ACPI >= 2.0
+            uint8_t checksum = 0;
+            uint8_t *field;
 
-    // Ищем нужную таблицу ACPI по её сигнатуре
-    for (int i = 0; i < table_entries; ++i) {
-        uint64_t address;
-        memcpy(&address, &sdts[i], sizeof(uint64_t));
-        table_header = mmio_remap_last_region((physaddr_t) address, table_header, sizeof(ACPISDTHeader), sizeof(ACPISDTHeader));
-        
-        // Если сигнатура совпадает, таблица найдена
-        if (!strncmp(table_header->Signature, sign, 4)) {
-            acpi_table_header = table_header;
-            break;
+            // Проверяем контрольную сумму "общей части" структуры RSDP
+            for (field = (uint8_t *)rsdp; field < (uint8_t *)&(rsdp->Length); field++) {
+                unsigned int temp = checksum + *field; // Используем временную переменную
+                checksum = (uint8_t)temp; // Усечение результата вручную
+            }
+
+            if (checksum)
+                panic("RSDP broken");
+
+            // Проверяем контрольную сумму дополнительной части для ACPI >= 2.0
+            for (; field < ((uint8_t *)rsdp + sizeof(*rsdp)); field++) {
+                unsigned int temp = checksum + *field;
+                checksum = (uint8_t)temp;
+            }
+
+            if (checksum)
+                panic("RSDP broken");
+
+            rsdt_phys = rsdp->XsdtAddress; // Адрес XSDT (64-битный)
+            XSDT_mode = 1; // Включаем режим работы с XSDT
+        } else {
+            // Если версия ACPI 1.0
+            uint8_t checksum = 0;
+            uint8_t *field;
+
+            // Проверяем контрольную сумму "общей части" структуры RSDP
+            for (field = (uint8_t *)rsdp; field < (uint8_t *)&(rsdp->Length); field++){
+                unsigned int temp = checksum + *field;
+                checksum = (uint8_t)temp;
+            }
+
+            if (checksum)
+                panic("RSDP broken");
+
+            rsdt_phys = rsdp->RsdtAddress; // Адрес RSDT (32-битный)
         }
+
+        // Мапим таблицу RSDT или XSDT по полученному физическому адресу
+        rsdt = mmio_map_region(rsdt_phys, sizeof(RSDT));
+        rsdt = mmio_map_region(rsdt_phys, rsdt->h.Length); // Повторное маппирование с учётом полного размера
+
+        // Проверяем контрольную сумму заголовка RSDT/XSDT
+        uint8_t checksum = 0;
+        for (int i = 0; i < rsdt->h.Length; i++) {
+            unsigned int temp = checksum + ((uint8_t *)&rsdt->h)[i];
+            checksum = (uint8_t)temp;
+        }
+
+        if (checksum)
+            panic("RSDT header broken"); // Ошибка: заголовок RSDT/XSDT повреждён
     }
 
-    // Если таблица не найдена, возвращаем NULL
-    if (!acpi_table_header) return NULL;
+    // Вычисляем количество записей в RSDT/XSDT
+    size_t SDT_length = (rsdt->h.Length - sizeof(ACPISDTHeader));
 
-    // Проверяем контрольную сумму найденной таблицы, чтобы убедиться, что она валидна
-    for (uint32_t i = 0; i < acpi_table_header->Length; ++i) {
-        checksum = (uint8_t)(checksum + ((char *) acpi_table_header)[i]);
+    if (XSDT_mode) {
+        // Если используется XSDT: записи по 64 бита (8 байт)
+        SDT_length /= 8;
+    } else {
+        // Если используется RSDT: записи по 32 бита (4 байта)
+        SDT_length /= 4;
     }
 
-    if (checksum) return NULL;
+    // Перебираем записи (адреса других таблиц) в RSDT/XSDT
+    for (size_t i = 0; i < SDT_length; i++) {
+        physaddr_t header_addr = 0;
+        if (!XSDT_mode) {
+            // 32-битные адреса (RSDT)
+            header_addr = rsdt->PointerToOtherSDT[i];
+        } else {
+            // 64-битные адреса (XSDT)
+            memcpy(&header_addr, &((uint8_t *)rsdt->PointerToOtherSDT)[i * sizeof(int64_t)], sizeof(int64_t));
+            //header_addr = ((int64_t *)(void *)rsdt->PointerToOtherSDT)[i];
+        }
+        if (!header_addr)
+            continue; // Пропускаем пустые записи
 
-    return acpi_table_header;
+        // Мапим заголовок таблицы по её адресу
+        ACPISDTHeader *header = mmio_map_region(header_addr, sizeof(ACPISDTHeader));
+        header = mmio_map_region(header_addr, header->Length); // Полное маппирование с учётом размера таблицы
+
+        // Сравниваем сигнатуру таблицы с искомой
+        if (!strncmp(header->Signature, sign, 4))
+            return header; // Возвращаем найденную таблицу
+    }
+
+    return NULL; // Таблица с заданной сигнатурой не найдена
 }
 
 /* Obtain and map FADT ACPI table address. */
