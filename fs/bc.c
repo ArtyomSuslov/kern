@@ -34,6 +34,14 @@ bc_pgfault(struct UTrapframe *utf) {
      * the disk. */
     // LAB 10: Your code here
 
+    addr = ROUNDDOWN(addr, BLKSIZE);
+    if (sys_alloc_region(CURENVID, addr, BLKSIZE, PROT_RW))
+        panic("bc_pgfault failed!");
+        
+    *(char *)addr = 0;
+    if (nvme_read(blockno * BLKSECTS, addr, BLKSECTS) != NVME_OK)
+        panic("bc_pgfault failed: reading\n");
+
     return 1;
 }
 
@@ -47,7 +55,6 @@ bc_pgfault(struct UTrapframe *utf) {
 void
 flush_block(void *addr) {
     blockno_t blockno = ((uintptr_t)addr - (uintptr_t)DISKMAP) / BLKSIZE;
-    int res;
 
     if (addr < (void *)(uintptr_t)DISKMAP || addr >= (void *)(uintptr_t)(DISKMAP + DISKSIZE))
         panic("flush_block of bad va %p", addr);
@@ -55,8 +62,17 @@ flush_block(void *addr) {
         panic("reading non-existent block %08x out of %08x\n", blockno, super->s_nblocks);
 
     // LAB 10: Your code here.
-    (void)res;
+    
+    addr = ROUNDDOWN(addr, BLKSIZE);
+    
+    if (!is_page_present(addr) || !is_page_dirty(addr))
+        return;
 
+    if (nvme_write(blockno * BLKSECTS, addr, BLKSECTS) != NVME_OK)
+        panic("flush_block failed\n");
+
+    if (sys_map_region(CURENVID, addr, CURENVID, addr, BLKSIZE, PTE_SYSCALL & get_prot(addr)))
+        panic("flush_block failed\n");
 
     assert(!is_page_dirty(addr));
 }
