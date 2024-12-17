@@ -311,14 +311,23 @@ static int
 sys_map_physical_region(uintptr_t pa, envid_t envid, uintptr_t va, size_t size, int perm) {
     // LAB 10: Your code here
 
-    if (va >= MAX_USER_ADDRESS || PAGE_OFFSET(va) || PAGE_OFFSET(pa) || PAGE_OFFSET(size) ||
-        size > MAX_USER_ADDRESS || MAX_USER_ADDRESS - va < size || perm & (PROT_SHARE | PROT_COMBINE | PROT_LAZY))
+    if (va >= MAX_USER_ADDRESS || 
+        PAGE_OFFSET(va) || 
+        PAGE_OFFSET(pa) ||
+        PAGE_OFFSET(size) ||
+        size > MAX_USER_ADDRESS || 
+        (MAX_USER_ADDRESS - va) < size ||
+        perm & (PROT_SHARE | PROT_COMBINE | PROT_LAZY))
+    {
         return -E_INVAL;
+    }
 
-    struct Env * fs;
+    struct Env *fs;
     int res = envid2env(envid, &fs, true);
+
     if (res)
         return res;
+    
     if (fs->env_type != ENV_TYPE_FS)
         return -E_BAD_ENV;
 
@@ -390,8 +399,9 @@ sys_ipc_try_send(envid_t envid, uint32_t value, uintptr_t srcva, size_t size, in
             return -E_NO_MEM;
         env->env_ipc_maxsz = MIN(size, env->env_ipc_maxsz);
         env->env_ipc_perm = perm;
-    } else 
+    } else {
         env->env_ipc_perm = 0;
+    }
 
     env->env_ipc_value = value;
     env->env_ipc_from = curenv->env_id;
