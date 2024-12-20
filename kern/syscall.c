@@ -459,6 +459,27 @@ static int
 sys_env_set_trapframe(envid_t envid, struct Trapframe *tf) {
     // LAB 11: Your code here
 
+    struct Env* env;
+    
+    // Проверяем, что указанное окружение существует и доступно
+    if (envid2env(envid, &env, 0) < 0)
+        return -E_BAD_ENV;
+
+    // Проверяем, что память, на которую указывает tf, доступна для чтения и соответствует размеру структуры Trapframe
+    user_mem_assert(curenv, tf, sizeof(*tf), PROT_R);
+
+    // Копируем данные trapframe из пространства пользователя в структуру окружения для текущего окружения
+    nosan_memcpy(&env->env_tf, tf, sizeof(*tf));
+
+    // Устанавливаем сегмент данных и стековых сегментов в режим пользователя (ring 3)
+    env->env_tf.tf_ds = GD_UD | 3; // Данные сегмента
+    env->env_tf.tf_es = GD_UD | 3; // Сегмент данных
+    env->env_tf.tf_ss = GD_UD | 3; // Сегмент стека
+    env->env_tf.tf_cs = GD_UT | 3; // Сегмент кода
+
+    env->env_tf.tf_rflags &= 0xFFF; // Сбрасываем все биты, кроме 12 младших (это флаги состояния)
+    env->env_tf.tf_rflags |= FL_IF; // Принудительно устанавливаем флаг IF, который позволяет обработку прерываний
+
     return 0;
 }
 
@@ -524,7 +545,12 @@ syscall(uintptr_t syscallno, uintptr_t a1, uintptr_t a2, uintptr_t a3, uintptr_t
         return sys_region_refs(a1, (size_t)a2, a3, (size_t)a4);
     } else if (syscallno == SYS_map_physical_region) {
         return sys_map_physical_region(a1, a2, a3, a4, a5);
-    }    // LAB 11: Your code here
+    }    
+    
+    // LAB 11: Your code here
+    else if (syscallno == SYS_env_set_trapframe) {
+        return sys_env_set_trapframe((envid_t)a1, (struct Trapframe *)a2);
+    }
 
     return -E_NO_SYS;
 }

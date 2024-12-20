@@ -62,7 +62,35 @@ foreach_shared_region(int (*fun)(void *start, void *end, void *arg), void *arg) 
     // LAB 11: Your code here:
 
     int res = 0;
-    (void)fun, (void)arg;
+
+    // Обрабатываем каждый уровень таблиц
+    for (uintptr_t pml4_addr = 0; pml4_addr < MAX_USER_ADDRESS; pml4_addr += 1ULL << PML4_SHIFT) {
+        if (!(uvpml4[VPML4(pml4_addr)] & PTE_P)) {
+            continue; // Пропускаем, если PTE не установлен
+        }
+
+        for (uintptr_t pdp_addr = 0; pdp_addr < 1ULL << PML4_SHIFT; pdp_addr += 1ULL << PDP_SHIFT) {
+            if (!(uvpdp[VPDP(pml4_addr + pdp_addr)] & PTE_P)) {
+                continue; // Пропускаем, если PTE не установлен
+            }
+
+            for (uintptr_t pd_addr = 0; pd_addr < 1ULL << PDP_SHIFT; pd_addr += 1ULL << PD_SHIFT) {
+                if (!(uvpd[VPD(pml4_addr + pdp_addr + pd_addr)] & PTE_P)) {
+                    continue; // Пропускаем, если PTE не установлен
+                }
+
+                for (uintptr_t pt_addr = 0; pt_addr < 1ULL << PD_SHIFT; pt_addr += 1ULL << PT_SHIFT) {
+                    uintptr_t addr = pml4_addr + pdp_addr + pd_addr + pt_addr;
+
+                    // Проверяем, является ли запись страницы действительной и разделяемой
+                    if (uvpt[VPT(addr)] & PTE_P && uvpt[VPT(addr)] & PTE_SHARE) {
+                        // Вызываем функцию для обработки региона памяти
+                        res = fun((void *)addr, (void *)(addr + PAGE_SIZE), arg);
+                    }
+                }
+            }
+        }
+    }
 
     return res;
 }
