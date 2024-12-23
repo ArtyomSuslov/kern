@@ -115,20 +115,27 @@ devfile_read(struct Fd *fd, void *buf, size_t n) {
     // LAB 10: Your code here:
 
     size_t res = 0;
-    for (res = 0; res < n;) {
-        fsipcbuf.read.req_fileid = fd->fd_file.id;
-        fsipcbuf.read.req_n = n;
 
-        int ret;
-        if ((ret = fsipc(FSREQ_READ, NULL)) <= 0) {
-            return ret ? ret : res;
+    while (res < n) {
+        fsipcbuf.read.req_fileid = fd->fd_file.id;
+        fsipcbuf.read.req_n = n - res;
+
+        int ret = fsipc(FSREQ_READ, NULL);
+        if (ret < 0) {
+            return ret; // Ошибка чтения
+        }
+        if (ret == 0) {
+            break; // EOF
+        }
+        if ((size_t)ret > (n - res)) {
+            return -E_FAULT; // Превышение допустимого размера
         }
 
         memcpy(buf, fsipcbuf.readRet.ret_buf, ret);
-
-        buf += ret;
+        buf = (char *)buf + ret;
         res += ret;
     }
+
     return res;
 }
 
@@ -148,21 +155,27 @@ devfile_write(struct Fd *fd, const void *buf, size_t n) {
     // LAB 10: Your code here:
     
     size_t res = 0;
-    for (res = 0; res < n;) {
-        size_t next = MIN(n, sizeof(fsipcbuf.write.req_buf));
+
+    while (res < n) {
+        size_t next = MIN(n - res, sizeof(fsipcbuf.write.req_buf));
 
         memcpy(fsipcbuf.write.req_buf, buf, next);
         fsipcbuf.write.req_fileid = fd->fd_file.id;
         fsipcbuf.write.req_n = next;
 
-        int ret;
-        if ((ret = fsipc(FSREQ_WRITE, NULL)) < 0) {
-            return ret;
+        int ret = fsipc(FSREQ_WRITE, NULL);
+        if (ret < 0) {
+            return ret; // Возвращаем ошибку
         }
 
-        buf += ret;
+        if ((size_t)ret > next) {
+            return -E_FAULT; // Слишком большой ответ от fsipc
+        }
+
+        buf = (const char *)buf + ret;
         res += ret;
     }
+
     return res;
 }
 
