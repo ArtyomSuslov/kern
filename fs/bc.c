@@ -71,7 +71,7 @@ flush_block(void *addr) {
     if (nvme_write(blockno * BLKSECTS, addr, BLKSECTS) != NVME_OK)
         panic("flush_block failed\n");
 
-    if (sys_map_region(CURENVID, addr, CURENVID, addr, BLKSIZE, PTE_SYSCALL & get_prot(addr)))
+    if (sys_map_region(CURENVID, addr, CURENVID, addr, BLKSIZE, get_prot(addr)))
         panic("flush_block failed\n");
 
     assert(!is_page_dirty(addr));

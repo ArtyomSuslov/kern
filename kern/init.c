@@ -35,6 +35,50 @@ timers_init(void) {
     }
 }
 
+void 
+init_fpu(void) {
+    bool fpu_supported = false;
+    bool sse_supported = false;
+    uint32_t edx;
+
+    /* Checking whether we can initilize FPU/SSE/SSE2 */
+    cpuid(1, NULL, NULL, NULL, &edx);
+
+    /* Checking the FPU bit */
+    if ((edx & (1 << 0))) {
+        fpu_supported = true;
+        cprintf("FPU is supported\n");
+    } else {
+        cprintf("FPU is not supported\n");
+    }
+
+    /* Checking the SSE/SSE2 bits */
+    if ((edx & (1 << 25)) || (edx & (1 << 26))) {
+        sse_supported = true;
+        cprintf("SSE/SSE2 is supported\n");
+    } else {
+        cprintf("SSE/SSE2 is not supported\n");
+    }
+
+    /* Initilizing FPU/SSE/SSE2 */
+    if (fpu_supported) {
+        uint64_t cr0 = rcr0();
+        cr0 |= (CR0_MP | CR0_NE) ;
+        cr0 &= ~(CR0_EM | CR0_TS) ;
+        lcr0(cr0);
+    
+        asm volatile("fninit");
+        cprintf("x87 FPU initialized\n");
+
+        if (sse_supported) {
+            uint64_t cr4 = rcr4();
+            cr4 |= (CR4_OSFXSR | CR4_OSXMMEXCPT);
+            lcr4(cr4);
+            cprintf("SSE/SSE2 initialized\n");
+        }
+    }
+}
+
 void
 timers_schedule(const char *name) {
     for (int i = 0; i < MAX_TIMERS; i++) {
@@ -141,6 +185,9 @@ i386_init(void) {
         cprintf("END: %p\n", end);
     }
 
+    /* Itask FPU/SSE/SSE2 initialization */
+    init_fpu();
+
     /* Lab 6 memory management initialization functions */
     init_memory();
 
@@ -157,7 +204,7 @@ i386_init(void) {
     /* Choose the timer used for scheduling: hpet or pit */
     timers_schedule("hpet0");
 
-    //assert(false);
+    // assert(false);
 
 #ifdef CONFIG_KSPACE
     /* Touch all you want */

@@ -152,7 +152,6 @@ CFLAGS += -Wall -Wformat=2 -Wno-unused-function -Werror -g -gpubnames -gdwarf-4
 # Add -fno-stack-protector if the option exists.
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
 CFLAGS += $(EXTRA_CFLAGS)
-CFLAGS += -mno-sse -mno-sse2 -mno-mmx
 
 
 KERN_SAN_CFLAGS :=
@@ -286,6 +285,7 @@ all: .git/hooks/post-checkout .git/hooks/pre-commit
 
 KERN_CFLAGS := $(CFLAGS) -DJOS_KERNEL -DLAB=$(LAB) -mcmodel=large -m64
 USER_CFLAGS := $(CFLAGS) -DLAB=$(LAB) -mcmodel=large -m64
+KERN_CFLAGS += -mno-sse -mno-sse2 -mno-mmx
 ifeq ($(CONFIG_KSPACE),y)
 KERN_CFLAGS += -DCONFIG_KSPACE
 USER_CFLAGS += -DCONFIG_KSPACE -DJOS_PROG
