@@ -52,4 +52,21 @@ extern void sys_yield(void);
                    type);                                       \
     } while (0)
 
+/* Itask code here */
+
+#define GET_MXCSR_MASK(fxsave) (*((uint32_t *)(fxsave->fxsave64_region + MXCSR_MASK_OFFSET)))
+#define SET_MXCSR_MASK(fxsave, mask) (*((uint32_t *)(fxsave->fxsave64_region + MXCSR_MASK_OFFSET)) = (mask))
+
+static inline void __attribute__((always_inline))
+fxsave64(struct fxsave64_area *area) {
+    asm volatile("fxsave64 %0" 
+                 : "=m"(*area));
+}
+
+static inline void __attribute__((always_inline))
+fxrstor64(struct fxsave64_area *area) {
+    asm volatile("fxrstor64 %0" 
+                 :: "m"(*area));
+}
+
 #endif /* !JOS_KERN_ENV_H */

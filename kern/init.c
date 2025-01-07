@@ -63,12 +63,12 @@ init_fpu(void) {
     /* Initilizing FPU/SSE/SSE2 */
     if (fpu_supported) {
         uint64_t cr0 = rcr0();
-        cr0 |= (CR0_MP | CR0_NE) ;
-        cr0 &= ~(CR0_EM | CR0_TS) ;
+        cr0 |= (CR0_MP | CR0_NE);
+        cr0 &= ~(CR0_EM | CR0_TS);
         lcr0(cr0);
     
         asm volatile("fninit");
-        cprintf("x87 FPU initialized\n");
+        cprintf("FPU initialized\n");
 
         if (sse_supported) {
             uint64_t cr4 = rcr4();
@@ -217,7 +217,7 @@ i386_init(void) {
 #else
 
 #if LAB >= 10
-    ENV_CREATE(fs_fs, ENV_TYPE_FS);
+    //ENV_CREATE(fs_fs, ENV_TYPE_FS);
 #endif
 
 #if defined(TEST)
@@ -225,7 +225,8 @@ i386_init(void) {
     ENV_CREATE(TEST, ENV_TYPE_USER);
 #else
     /* Touch all you want. */
-    ENV_CREATE(user_icode, ENV_TYPE_USER);
+    //ENV_CREATE(user_icode, ENV_TYPE_USER);
+    ENV_CREATE(user_hello, ENV_TYPE_USER);
 #endif /* TEST* */
 #endif
 

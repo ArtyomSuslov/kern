@@ -30,6 +30,11 @@ typedef int32_t envid_t;
 #define NENV        (1 << LOG2NENV)
 #define ENVX(envid) ((envid) & (NENV - 1))
 
+/* Itask's defines */
+#define DEFAULT_MXCSR_MASK 0xFFBF
+#define MXCSR_MASK_OFFSET  28
+#define MXCSR_MASK_SIZE    4
+
 /* Values of env_status in struct Env */
 enum {
     ENV_FREE,
@@ -57,6 +62,10 @@ struct AddressSpace {
     struct Page *root; /* root node of address space tree */
 };
 
+/* Itask's struct for FPU/SSE/SSE2 context */
+struct fxsave64_area {
+    uint8_t fxsave64_region[512];
+} __attribute__((aligned(16)));
 
 struct Env {
     struct Trapframe env_tf; /* Saved registers */
@@ -82,6 +91,9 @@ struct Env {
     uint32_t env_ipc_value;  /* Data value sent to us */
     envid_t env_ipc_from;    /* envid of the sender */
     int env_ipc_perm;        /* Perm of page mapping received */
+
+    /* Itask FPU */
+    struct fxsave64_area env_fpu_state; /* Env's FPU/SSE state */
 };
 
 #endif /* !JOS_INC_ENV_H */

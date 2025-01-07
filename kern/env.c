@@ -189,6 +189,11 @@ env_alloc(struct Env **newenv_store, envid_t parent_id, enum EnvType type) {
     /* For now init trapframe with IF set */
     env->env_tf.tf_rflags = FL_IF | (type == ENV_TYPE_FS ? FL_IOPL_3 : FL_IOPL_0);
 
+    /* Itask code here */
+    /* Initilize fxsave64_area struct and set default mask for it */
+    memset(&env->env_fpu_state, 0, sizeof(env->env_fpu_state));
+    SET_MXCSR_MASK((&env->env_fpu_state), DEFAULT_MXCSR_MASK);
+
     /* Clear the page fault handler until user installs one. */
     env->env_pgfault_upcall = 0;
 
@@ -576,6 +581,9 @@ env_run(struct Env *env) {
         if (curenv->env_status == ENV_RUNNING) {
             curenv->env_status = ENV_RUNNABLE;
         }
+        
+        // Сохранение FPU/SSE состояния текущего процесса
+        fxsave64(&curenv->env_fpu_state);
     }
 
     if (env->env_status != ENV_RUNNABLE)
@@ -584,6 +592,9 @@ env_run(struct Env *env) {
     curenv = env;
     curenv->env_status = ENV_RUNNING;
     curenv->env_runs++;
+
+    // Восстановление FPU/SSE состояния нового процесса
+    fxrstor64(&curenv->env_fpu_state);
 
     // LAB 8: Your code here
 
