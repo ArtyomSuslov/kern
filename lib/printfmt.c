@@ -8,6 +8,9 @@
 #include <inc/stdarg.h>
 #include <inc/error.h>
 
+#include <inc/ryu.h>
+#include <inc/lib.h>
+
 /*
  * Space or zero padding and a field width are supported for the numeric
  * formats only.
@@ -39,6 +42,190 @@ static const char *const error_string[MAXERROR] = {
         [E_NOT_EXEC] = "file is not a valid executable",
         [E_NOT_SUPP] = "operation not supported",
 };
+
+#ifndef JOS_KERNEL
+
+// Приблизительное значение натурального логарифма числа 10
+#define LN_10 2.3025850929940456840179914546843642076011014886288
+
+// Функция для вычисления натурального логарифма (ln(x)) через разложение Тейлора
+double ln(double x) {
+    if (x <= 0) {
+        return -1.0 / 0.0; // Возвращаем -inf для отрицательных или нулевых значений
+    }
+
+    // Приводим x в диапазон (0.5, 1.5) для лучшей сходимости
+    double result = 0.0;
+    int iterations = 50; // Количество итераций разложения Тейлора
+    int power = 0;
+
+    // Приведение x в диапазон (0.5, 1.5)
+    while (x > 1.5) {
+        x /= 2.718281828459045; // Делим на e
+        power++;
+    }
+    while (x < 0.5) {
+        x *= 2.718281828459045; // Умножаем на e
+        power--;
+    }
+
+    // Разложение Тейлора для ln(x) вокруг точки 1
+    double y = x - 1;
+    double term = y;
+    for (int i = 1; i <= iterations; i++) {
+        if (i % 2 == 1) {
+            result += term / i; // Чётные члены вычитаем
+        } else {
+            result -= term / i;
+        }
+        term *= y; // Следующий член ряда
+    }
+
+    // Учитываем масштабирование
+    result += power;
+    return result;
+}
+
+// Функция для вычисления log10(x)
+double log10(double x) {
+    return ln(x) / LN_10;
+}
+
+// Функция для проверки, является ли число бесконечностью
+bool isinf(double x, uint64_t *sign) {
+    // Преобразуем double в uint64_t для анализа битов
+    union {
+        double d;
+        uint64_t bits;
+    } u;
+
+    u.d = x;
+
+    // Извлекаем биты знака, порядка и мантиссы
+    *sign = (u.bits >> 63) & 0x1;         // Старший бит (знак)
+    uint64_t exponent = (u.bits >> 52) & 0x7FF;  // 11 битов порядка
+    uint64_t mantissa = u.bits & 0xFFFFFFFFFFFFF; // 52 бита мантиссы
+
+    // Условие для бесконечности: порядок = 0x7FF, мантисса = 0
+    if (exponent == 0x7FF && mantissa == 0) {
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Handles floating-point number formatting for the "g" specifier with width.
+ */
+static void 
+print_float(void (*putch)(int, void *), void *put_arg,
+                          double value, int precision, int width, char padc,
+                          bool capital, bool hash, char format) {
+    char buffer[2000];
+    char new_buf[2000];
+    uint64_t sign_inf;
+    
+    int formatted_length; // Length of the formatted string
+
+    if (precision == -1) {
+        precision = 6; // Default precision
+    } else if (precision == 0) {
+        precision = 1; // Precision 0 means 1 significant digit for 'g'
+    }
+    
+    // Special case handling for NaN, infinity, and zero
+    if (value != value) {
+        strcpy(buffer, capital ? "NAN" : "nan");
+    } else if (isinf(value, &sign_inf)) {
+        if (capital) {
+            strcpy(buffer, sign_inf ? "-INF" : "INF");
+        } else {
+            strcpy(buffer, sign_inf ? "-inf" : "inf");
+        }
+    } else if (value == 0.0) {
+        // strcpy(buffer, signbit(value) ? "-0" : "0");
+        strcpy(buffer, "0");
+        if (hash) {
+            strcat(buffer, "."); // Add decimal point if '#' is used
+            int i;
+            for (i = 0; i < precision - 1; ++i) {
+                strcat(buffer, "0");
+            }
+        } else if (format == 'e' || format == 'f') {
+            strcat(buffer, ".");
+            
+            for (int i = 0; i < precision; ++i) {
+                strcat(buffer, "0");
+            }
+
+            if (format == 'e') {
+                strcat(buffer, capital ? "E+00" : "e+00");
+            }
+        }
+    } else {
+        // Format the value based on 'g' rules
+        if (format == 'f') {
+            d2fixed(value, precision, new_buf);
+            strcpy(buffer, new_buf);
+        } else if (format == 'e') {
+            d2exp(value, precision, new_buf);
+            if (capital) {
+                char *e_char = strchr(buffer, 'e');
+                *e_char = 'E';
+            }
+
+            strcpy(buffer, new_buf);
+        } else {
+            int exponent = (int)(log10(value > 0.0 ? value : -value));
+
+            if (precision > exponent && exponent >= -4) {
+                // Use 'f' format
+                int adjusted_precision = precision - (exponent + 1);
+                if (adjusted_precision < 0) {
+                    adjusted_precision = 1;
+                }
+                
+                d2fixed(value, adjusted_precision, new_buf);
+                strcpy(buffer, new_buf);
+            } else {
+                // Use 'e' format
+                d2exp(value, precision - 1, buffer);
+                if (capital) {
+                    char *e_char = strchr(buffer, 'e');
+                    *e_char = 'E';
+                }
+            }
+        }
+
+        // // Remove trailing zeros and decimal point unless '#' flag is used
+        // if (!hash) {
+        //     char *dot = strchr(buffer, '.');
+        //     if (dot) {
+        //         char *end = buffer + strlen(buffer) - 1;
+        //         while (end > dot && *end == '0') {
+        //             *end-- = '\0';
+        //         }
+        //         if (*end == '.') {
+        //             *end = '\0'; // Remove the decimal point if no fractional part remains
+        //         }
+        //     }
+        // }
+    }
+
+    // Get the length of the formatted string
+    formatted_length = strlen(buffer);
+
+    // Handle padding based on width
+    if (width > formatted_length) {
+        int padding_length = width - formatted_length;
+
+        while (padding_length-- > 0) putch(padc, put_arg);
+    }
+    for (char *p = buffer; *p; ++p) {
+        putch(*p, put_arg);
+    }
+}
+
+#endif
 
 /*
  * Print a number (base <= 16) in reverse order,
@@ -118,6 +305,10 @@ vprintfmt(void (*putch)(int, void *), void *put_arg, const char *fmt, va_list ap
         unsigned lflag = 0, base = 10;
         bool altflag = 0, zflag = 0;
         uintmax_t num = 0;
+        #ifndef JOS_KERNEL
+        double fnum;
+        bool capital_flag = 0;
+        #endif
     reswitch:
 
         switch (ch = *ufmt++) {
@@ -231,6 +422,21 @@ vprintfmt(void (*putch)(int, void *), void *put_arg, const char *fmt, va_list ap
             num = (uintptr_t)va_arg(aq, void *);
             base = 16;
             goto number;
+            
+        /* Itask code here */
+        #ifndef JOS_KERNEL
+        case 'F':
+        case 'E':
+        case 'G':
+            capital_flag = 1;
+        case 'f':
+        case 'e':
+        case 'g':
+            fnum = va_arg(aq, double);
+            print_float(putch, put_arg, fnum, precision, width, padc,
+                        capital_flag, altflag, ch);
+            break;
+        #endif
 
         case 'X': /* (unsigned) hexadecimal, uppercase */
         case 'x': /* (unsigned) hexadecimal, lowercase */

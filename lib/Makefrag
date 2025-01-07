@@ -1,6 +1,12 @@
 OBJDIRS += lib
 
-LIB_SRCFILES :=		lib/console.c \
+LIB_SRCFILES :=		lib/d2fixed.c \
+			lib/d2s.c \
+			lib/f2s.c \
+			lib/generic_128.c \
+			lib/s2d.c \
+			lib/s2f.c \
+			lib/console.c \
 			lib/libmain.c \
 			lib/exit.c \
 			lib/panic.c \

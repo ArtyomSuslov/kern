@@ -217,7 +217,7 @@ i386_init(void) {
 #else
 
 #if LAB >= 10
-    ENV_CREATE(fs_fs, ENV_TYPE_FS);
+    // ENV_CREATE(fs_fs, ENV_TYPE_FS);
 #endif
 
 #if defined(TEST)
@@ -226,7 +226,7 @@ i386_init(void) {
 #else
     /* Touch all you want. */
     //ENV_CREATE(user_icode, ENV_TYPE_USER);
-    ENV_CREATE(user_icode, ENV_TYPE_USER);
+    ENV_CREATE(user_test_float, ENV_TYPE_USER);
 #endif /* TEST* */
 #endif
 
