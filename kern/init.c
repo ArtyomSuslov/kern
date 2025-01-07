@@ -185,9 +185,6 @@ i386_init(void) {
         cprintf("END: %p\n", end);
     }
 
-    /* Itask FPU/SSE/SSE2 initialization */
-    init_fpu();
-
     /* Lab 6 memory management initialization functions */
     init_memory();
 
@@ -197,6 +194,9 @@ i386_init(void) {
     /* Framebuffer init should be done after memory init */
     fb_init();
     if (trace_init) cprintf("Framebuffer initialised\n");
+
+    /* Itask FPU/SSE/SSE2 initialization */
+    init_fpu();
 
     /* User environment initialization functions */
     env_init();
@@ -217,7 +217,7 @@ i386_init(void) {
 #else
 
 #if LAB >= 10
-    //ENV_CREATE(fs_fs, ENV_TYPE_FS);
+    ENV_CREATE(fs_fs, ENV_TYPE_FS);
 #endif
 
 #if defined(TEST)
@@ -226,7 +226,7 @@ i386_init(void) {
 #else
     /* Touch all you want. */
     //ENV_CREATE(user_icode, ENV_TYPE_USER);
-    ENV_CREATE(user_hello, ENV_TYPE_USER);
+    ENV_CREATE(user_icode, ENV_TYPE_USER);
 #endif /* TEST* */
 #endif
 

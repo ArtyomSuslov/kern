@@ -388,8 +388,6 @@ trap(struct Trapframe *tf) {
         }
         if (!res) {
             in_page_fault = 0;
-            // Восстановление FPU/SSE состояния нового процесса
-            fxrstor64(&curenv->env_fpu_state);
             env_pop_tf(tf);
         }
     }

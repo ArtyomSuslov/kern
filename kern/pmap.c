@@ -2046,8 +2046,14 @@ init_memory(void) {
     uefi_lp = (LOADER_PARAMS *)uefi_lp->SelfVirtual;
     /* Set appropriate cr0 and cr4 bits
      * (In assembly code only minimal set of modes was set)*/
-    lcr0(CR0_PE | CR0_PG | CR0_AM | CR0_WP | CR0_NE | CR0_MP);
-    lcr4(CR4_PSE | CR4_PAE | CR4_PCE);
+    uint64_t cr0 = rcr0();
+    uint64_t cr4 = rcr4();
+    
+    cr0 |= (CR0_PE | CR0_PG | CR0_AM | CR0_WP | CR0_NE | CR0_MP);
+    cr4 = (CR4_PSE | CR4_PAE | CR4_PCE);
+    
+    lcr0(cr0);
+    lcr4(cr4);
 
     /* Enable NX bit (execution protection) */
     uint64_t efer = rdmsr(EFER_MSR);
